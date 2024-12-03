@@ -1,0 +1,148 @@
+//movies_metadata
+from pyflink.table import EnvironmentSettings, TableEnvironment
+import pandas as pd
+from sklearn.model_selection import train_test_split
+from sklearn.linear_model import LinearRegression
+from sklearn.metrics import mean_squared_error, r2_score
+import matplotlib.pyplot as plt
+import seaborn as sns
+
+# Create a Flink batch environment
+env_settings = EnvironmentSettings.new_instance().in_batch_mode().build()
+table_env = TableEnvironment.create(env_settings)
+
+# Test by creating a simple table
+test_data = [(1, 'Hello'), (2, 'Flink'), (3, 'Test')]
+test_table = table_env.from_elements(test_data, ['id', 'text'])
+test_table.execute().print()
+
+# Load the dataset from S3
+file_path = 's3://themovieset/movies_metadata.csv'
+movies_data = pd.read_csv(file_path, low_memory=False)
+
+# Clean and preprocess the dataset
+movies_data_cleaned = movies_data[['id', 'budget', 'vote_average']]
+movies_data_cleaned = movies_data_cleaned.dropna(subset=['budget', 'vote_average'])
+movies_data_cleaned['budget'] = pd.to_numeric(movies_data_cleaned['budget'], errors='coerce')
+movies_data_cleaned = movies_data_cleaned[movies_data_cleaned['budget'] > 0]
+movies_data_cleaned = movies_data_cleaned.drop_duplicates()
+
+# Independent variable (X) - budget
+X = movies_data_cleaned[['budget']]
+y = movies_data_cleaned['vote_average']
+
+# Split the data into training and testing sets
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+
+# Create and train the model
+model = LinearRegression()
+model.fit(X_train, y_train)
+
+# Make predictions
+y_pred = model.predict(X_test)
+
+# Evaluate the model
+mse = mean_squared_error(y_test, y_pred)
+r2 = r2_score(y_test, y_pred)
+print(f"Mean Squared Error: {mse}")
+print(f"R2 Score: {r2}")
+
+# Scatter plot with regression line (manual plotting)
+plt.figure(figsize=(10, 6))
+plt.scatter(X_test, y_test, color='blue', label='Actual Data')
+plt.plot(X_test, y_pred, color='red', label='Regression Line')
+plt.xlabel('Budget')
+plt.ylabel('Vote Average')
+plt.title('Budget vs Vote Average with Regression Line')
+plt.legend()
+plt.show()
+
+# Scatter plot with regression line (using Seaborn)
+plt.figure(figsize=(10, 6))
+sns.regplot(x='budget', y='vote_average', data=movies_data_cleaned, scatter_kws={'color': 'blue'}, line_kws={'color': 'red'})
+plt.title('Budget vs Vote Average with Regression Line')
+plt.xlabel('Budget')
+plt.ylabel('Vote Average')
+plt.show()
+
+
+
+
+
+
+//ratings
+from sklearn.linear_model import LogisticRegression
+from sklearn.metrics import accuracy_score, classification_report, confusion_matrix
+
+# Load the dataset from S3
+file_path = 's3://themovieset/ratings.csv'
+ratings= pd.read_csv(file_path, low_memory=False)
+
+# Step 1: Take 10 million records from the data
+ratings_sampled = ratings.head(10_000_000)
+
+# Step 2: Drop the 'timestamp' column
+ratings_sampled = ratings_sampled.drop(columns=['timestamp'])
+
+# Step 3: Remove rows with null values
+ratings_sampled = ratings_sampled.dropna()
+
+# Step 4: Remove duplicate rows
+ratings_sampled = ratings_sampled.drop_duplicates()
+
+# Display the cleaned dataset's first few rows and its shape
+print(ratings_sampled.head())
+print(f"Shape of the cleaned dataset: {ratings_sampled.shape}")
+
+# Step 2: Group by movieId and count all ratings (reviews)
+movie_review_counts = ratings.groupby('movieId').size().reset_index(name='total_reviews')
+
+# Step 3: Define the threshold and create the label column
+threshold = 1000
+movie_review_counts['label'] = movie_review_counts['total_reviews'].apply(lambda x: 1 if x >= threshold else 0)
+
+# Step 4: Prepare features (X) and target (y)
+X = movie_review_counts[['total_reviews']]  # Feature: total number of reviews
+y = movie_review_counts['label']  # Target: 1 if >=1000 reviews, else 0
+
+# Step 5: Split the data into training and testing sets
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+
+# Step 6: Train the logistic regression model
+model = LogisticRegression()
+model.fit(X_train, y_train)
+
+# Step 7: Make predictions on the test set
+y_pred = model.predict(X_test)
+
+# Step 8: Evaluate the model
+accuracy = accuracy_score(y_test, y_pred)
+print(f"Accuracy: {accuracy:.2f}")
+print("Confusion Matrix:")
+print(confusion_matrix(y_test, y_pred))
+print("Classification Report:")
+print(classification_report(y_test, y_pred))
+
+# Step 9: Add predictions to the movie_review_counts DataFrame for visualization
+movie_review_counts['predicted_label'] = model.predict(X)  # Use the entire dataset for predictions
+movie_review_counts['predicted_category'] = movie_review_counts['predicted_label'].apply(lambda x: 'High' if x == 1 else 'Low')
+
+# Step 10: Scatter plot of actual categories
+plt.figure(figsize=(12, 6))
+sns.scatterplot(data=movie_review_counts, x='movieId', y='total_reviews', hue='label', alpha=0.7, palette={1: 'blue', 0: 'orange'})
+plt.title('Scatter Plot of MovieId vs. Total Reviews (Actual)')
+plt.xlabel('MovieId')
+plt.ylabel('Total Reviews')
+plt.legend(title='Actual Category')
+plt.grid()
+plt.show()
+
+# Step 11: Scatter plot of predicted categories
+plt.figure(figsize=(12, 6))
+sns.scatterplot(data=movie_review_counts, x='movieId', y='total_reviews', hue='predicted_category', alpha=0.7, palette={'High': 'green', 'Low': 'red'})
+plt.title('Scatter Plot of MovieId vs. Total Reviews (Predicted)')
+plt.xlabel('MovieId')
+plt.ylabel('Total Reviews')
+plt.legend(title='Predicted Category')
+plt.grid()
+plt.show()
